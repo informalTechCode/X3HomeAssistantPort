@@ -948,6 +948,7 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync|remoteMessaging"
             tools:node="merge" />
+        <meta-data android:name="com.rayneo.mercury.app" android:value="true" />
 
     </application>
 
