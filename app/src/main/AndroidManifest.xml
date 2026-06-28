@@ -115,12 +115,14 @@
             android:name="io.homeassistant.companion.android.launch.LaunchActivity"
             android:exported="true"
             android:supportsPictureInPicture="true"
+            android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.LaunchScreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.rayneo.intent.category.AR_APP" />
             </intent-filter>
 
             <intent-filter>
@@ -478,6 +480,7 @@
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
             android:exported="false"
+            android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode" />
 
         <activity

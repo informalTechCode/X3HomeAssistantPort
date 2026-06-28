@@ -2,6 +2,8 @@
 <changelog xmlns:tools="http://schemas.android.com/tools"
     tools:ignore="MissingDefaultResource">
     <release version="2026.6.6 - Main" versioncode="3">
+        <change>Fixed a debug launch crash while AppCompat restores the selected language</change>
+        <change>Added native RayNeo X3 side-by-side rendering and companion controls</change>
         <change>Bug fixes and dependency updates</change>
     </release>
     <release version="2026.6.6 - Wear" versioncode="2">
