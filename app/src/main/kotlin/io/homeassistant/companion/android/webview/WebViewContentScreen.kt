@@ -6,7 +6,6 @@ import android.view.View
 import android.webkit.WebView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -26,13 +25,11 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -40,15 +37,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import dev.chrisbanes.haze.hazeEffect
@@ -62,8 +55,8 @@ import io.homeassistant.companion.android.frontend.permissions.NotificationPermi
 import io.homeassistant.companion.android.util.compose.media.player.HAMediaPlayer
 import io.homeassistant.companion.android.util.compose.webview.HAWebView
 import io.homeassistant.companion.android.webview.rayneo.RayNeoCursorPosition
+import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboard
 import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardController
-import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardState
 import io.homeassistant.companion.android.webview.rayneo.RayNeoWebViewMirror
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -93,6 +86,7 @@ internal fun WebViewContentScreen(
     rayNeoCursorVisible: Boolean = true,
     rayNeoKeyboardController: RayNeoKeyboardController? = null,
     rayNeoKeyboardVisible: Boolean = false,
+    rayNeoScreenMasked: Boolean = false,
     onRayNeoViewportChanged: (width: Int, height: Int, x: Float, y: Float) -> Unit = { _, _, _, _ -> },
 ) {
     HATheme {
@@ -158,12 +152,15 @@ internal fun WebViewContentScreen(
                                 statusBarColor = statusBarColor,
                                 backgroundColor = backgroundColor,
                             )
-                            if (rayNeoCursorVisible) RayNeoCursor(rayNeoCursorPosition)
                             if (rayNeoKeyboardVisible && rayNeoKeyboardController != null) {
                                 RayNeoKeyboard(
                                     state = rayNeoKeyboardController.state.value,
                                     onKeyClick = rayNeoKeyboardController::press,
                                 )
+                            }
+                            if (rayNeoCursorVisible) RayNeoCursor(rayNeoCursorPosition)
+                            if (rayNeoScreenMasked) {
+                                Box(modifier = Modifier.fillMaxSize().background(Color.Black))
                             }
                         }
                         Box(
@@ -253,47 +250,6 @@ private fun BoxScope.RayNeoCursor(position: RayNeoCursorPosition) {
             radius = 5.dp.toPx(),
             center = androidx.compose.ui.geometry.Offset(position.x, position.y),
         )
-    }
-}
-
-@Composable
-private fun BoxScope.RayNeoKeyboard(
-    state: RayNeoKeyboardState,
-    onKeyClick: (io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardAction) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.94f))
-            .padding(2.dp),
-    ) {
-        state.rows.forEachIndexed { rowIndex, keys ->
-            Row(modifier = Modifier.fillMaxWidth()) {
-                keys.forEachIndexed { columnIndex, key ->
-                    val selected = rowIndex == state.selectedRow && columnIndex == state.selectedColumn
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .weight(key.weight)
-                            .height(36.dp)
-                            .padding(1.dp)
-                            .background(if (selected) Color.White else Color(0xff262626))
-                            .clickable { onKeyClick(key.action) },
-                    ) {
-                        BasicText(
-                            text = key.label,
-                            style = TextStyle(
-                                color = if (selected) Color.Black else Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.Center,
-                            ),
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 

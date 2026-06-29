@@ -25,35 +25,19 @@ import timber.log.Timber
 class NightModeManager @Inject constructor(private val prefsRepository: PrefsRepository) {
 
     suspend fun getCurrentNightMode(): NightModeTheme {
-        val nightMode = prefsRepository.getCurrentNightModeTheme()
-        return if (nightMode == null) {
-            val nightModeThemeToSet = if (SdkVersion.isAtLeast(Build.VERSION_CODES.P)) {
-                SYSTEM
-            } else {
-                LIGHT
-            }
-            prefsRepository.saveNightModeTheme(nightModeThemeToSet)
-            nightModeThemeToSet
-        } else {
-            nightMode
-        }
+        // Always force dark mode
+        return DARK
     }
 
     suspend fun saveNightMode(nightModeTheme: NightModeTheme?) {
-        if (nightModeTheme !== null) {
-            val currentNightMode = getCurrentNightMode()
-            if (currentNightMode != nightModeTheme) {
-                prefsRepository.saveNightModeTheme(nightModeTheme)
-                nightModeTheme.setAsDefaultNightMode()
-            }
-        } else {
-            Timber.i("Skipping saving night mode theme since nightModeTheme is null")
-        }
+        // Ignore any attempt to change — always dark
+        Timber.i("Ignoring night mode change request, forcing DARK mode")
     }
 
     suspend fun applyCurrentNightMode() {
-        val nightMode = getCurrentNightMode()
-        nightMode.setAsDefaultNightMode()
+        withContext(Dispatchers.Main) {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+        }
     }
 }
 

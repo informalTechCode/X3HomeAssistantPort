@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
@@ -36,6 +35,7 @@ import io.homeassistant.companion.android.common.R as commonR
 import io.homeassistant.companion.android.common.compose.composable.HAAccentButton
 import io.homeassistant.companion.android.common.compose.composable.HATextField
 import io.homeassistant.companion.android.common.compose.composable.HATopBar
+import io.homeassistant.companion.android.common.compose.composable.haVerticalScroll
 import io.homeassistant.companion.android.common.compose.theme.HADimens
 import io.homeassistant.companion.android.common.compose.theme.HATextStyle
 import io.homeassistant.companion.android.common.compose.theme.HAThemeForPreview
@@ -106,7 +106,7 @@ private fun NameYourDeviceContent(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = HADimens.SPACE4)
-            .verticalScroll(rememberScrollState()),
+            .haVerticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(HADimens.SPACE6),
     ) {

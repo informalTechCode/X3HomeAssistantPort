@@ -17,14 +17,16 @@ internal class RayNeoCursorController {
     private var lastX = Float.NaN
     private var lastY = Float.NaN
     private var running = false
+    private var frameScheduled = false
     private var listener: ((RayNeoCursorPosition) -> Unit)? = null
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
+            frameScheduled = false
             if (!running) return
-            updateFrame()
+            val stillMoving = updateFrame()
             emitIfChanged()
-            Choreographer.getInstance().postFrameCallback(this)
+            if (stillMoving) scheduleFrame()
         }
     }
 
@@ -52,24 +54,25 @@ internal class RayNeoCursorController {
         running = true
         currentX = targetX
         currentY = targetY
-        Choreographer.getInstance().postFrameCallback(frameCallback)
+        emitIfChanged()
     }
 
     fun stop() {
         running = false
+        frameScheduled = false
         Choreographer.getInstance().removeFrameCallback(frameCallback)
     }
 
     fun moveBy(dx: Float, dy: Float) {
         targetX = (targetX + dx).coerceIn(0f, width)
         targetY = (targetY + dy).coerceIn(0f, height)
-        if (!running) snapToTarget()
+        if (running) scheduleFrame() else snapToTarget()
     }
 
     fun moveTo(x: Float, y: Float) {
         targetX = x.coerceIn(0f, width)
         targetY = y.coerceIn(0f, height)
-        if (!running) snapToTarget()
+        if (running) scheduleFrame() else snapToTarget()
     }
 
     fun onTrackpadGesture(action: RayNeoTrackpadAction, dx: Float, dy: Float, pointerCount: Int) {
@@ -92,14 +95,20 @@ internal class RayNeoCursorController {
 
     fun position(): RayNeoCursorPosition = RayNeoCursorPosition(currentX, currentY)
 
-    private fun updateFrame() {
+    private fun scheduleFrame() {
+        if (!running || frameScheduled) return
+        frameScheduled = true
+        Choreographer.getInstance().postFrameCallback(frameCallback)
+    }
+
+    private fun updateFrame(): Boolean {
         val dx = targetX - currentX
         val dy = targetY - currentY
         val distance = sqrt(dx * dx + dy * dy)
         if (distance < SNAP_DISTANCE_PX) {
             currentX = targetX
             currentY = targetY
-            return
+            return false
         }
         val alpha = when {
             distance >= FAST_DISTANCE_PX -> 0.92f
@@ -109,6 +118,7 @@ internal class RayNeoCursorController {
         }
         currentX += dx * alpha
         currentY += dy * alpha
+        return true
     }
 
     private fun snapToTarget() {

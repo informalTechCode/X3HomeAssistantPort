@@ -9,7 +9,9 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.VisualTransformation
 import io.homeassistant.companion.android.common.compose.theme.HAColorScheme
@@ -17,6 +19,9 @@ import io.homeassistant.companion.android.common.compose.theme.HARadius
 import io.homeassistant.companion.android.common.compose.theme.HATextStyle
 import io.homeassistant.companion.android.common.compose.theme.LocalHAColorScheme
 import io.homeassistant.companion.android.common.compose.theme.MaxButtonWidth
+
+/** Receives text-field focus changes when a host supplies a custom keyboard. */
+val LocalHATextFieldFocusHandler = compositionLocalOf<((Boolean) -> Unit)?> { null }
 
 /**
  * A Home Assistant themed [OutlinedTextField]. This composable is the equivalent of the `ha-input` on the frontend.
@@ -65,6 +70,7 @@ fun HATextField(
     singleLine: Boolean = maxLines == 1,
     visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
+    val customKeyboardFocusHandler = LocalHATextFieldFocusHandler.current
     // TODO probably replace the text composable by strings to control the applied style
     OutlinedTextField(
         enabled = enabled,
@@ -86,6 +92,13 @@ fun HATextField(
         label = label,
         colors = LocalHAColorScheme.current.textField(),
         modifier = modifier
+            .then(
+                if (customKeyboardFocusHandler != null) {
+                    Modifier.onFocusChanged { customKeyboardFocusHandler(it.isFocused) }
+                } else {
+                    Modifier
+                },
+            )
             .widthIn(max = MaxButtonWidth)
             .fillMaxWidth(),
     )

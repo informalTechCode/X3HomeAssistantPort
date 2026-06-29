@@ -106,7 +106,7 @@ internal fun ConnectionScreen(
         }
 
         if (isLoading) {
-            LoadingScreen(modifier = Modifier.fillMaxSize())
+            LoadingScreen(modifier = Modifier.fillMaxSize(), animated = false)
         }
     }
 }

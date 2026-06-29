@@ -88,6 +88,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebSettingsCompat
 import dagger.hilt.android.AndroidEntryPoint
 import io.homeassistant.companion.android.BaseActivity
 import io.homeassistant.companion.android.R
@@ -140,8 +141,6 @@ import io.homeassistant.companion.android.improv.ui.ImprovPermissionDialog
 import io.homeassistant.companion.android.improv.ui.ImprovSetupDialog
 import io.homeassistant.companion.android.launch.LaunchActivity
 import io.homeassistant.companion.android.nfc.WriteNfcTag
-import io.homeassistant.companion.android.sensors.SensorReceiver
-import io.homeassistant.companion.android.sensors.SensorWorker
 import io.homeassistant.companion.android.settings.ConnectionSecurityLevelFragment
 import io.homeassistant.companion.android.settings.SettingsActivity
 import io.homeassistant.companion.android.settings.server.ServerChooserFragment
@@ -161,7 +160,6 @@ import io.homeassistant.companion.android.util.hasSameOrigin
 import io.homeassistant.companion.android.util.isStarted
 import io.homeassistant.companion.android.util.sensitive
 import io.homeassistant.companion.android.util.toRelativeUrl
-import io.homeassistant.companion.android.websocket.WebsocketManager
 import io.homeassistant.companion.android.webview.WebView.ErrorType
 import io.homeassistant.companion.android.webview.externalbus.EntityAddToActionsResponse
 import io.homeassistant.companion.android.webview.externalbus.ExternalBusMessage
@@ -171,12 +169,15 @@ import io.homeassistant.companion.android.webview.externalbus.NavigateTo
 import io.homeassistant.companion.android.webview.externalbus.ShowSidebar
 import io.homeassistant.companion.android.webview.insecure.BlockInsecureFragment
 import io.homeassistant.companion.android.webview.rayneo.GLASSES_INPUT_PORT
+import io.homeassistant.companion.android.webview.rayneo.RAYNEO_KEYBOARD_BRIDGE_NAME
 import io.homeassistant.companion.android.webview.rayneo.RayNeoBluetoothControllerClient
 import io.homeassistant.companion.android.webview.rayneo.RayNeoControllerInputListener
+import io.homeassistant.companion.android.webview.rayneo.RayNeoControllerKeyCommand
 import io.homeassistant.companion.android.webview.rayneo.RayNeoControllerMode
 import io.homeassistant.companion.android.webview.rayneo.RayNeoCursorController
 import io.homeassistant.companion.android.webview.rayneo.RayNeoCursorPosition
 import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardAction
+import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardBridge
 import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardController
 import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardListener
 import io.homeassistant.companion.android.webview.rayneo.RayNeoNetworkInputServer
@@ -185,11 +186,16 @@ import io.homeassistant.companion.android.webview.rayneo.RayNeoScrollModeControl
 import io.homeassistant.companion.android.webview.rayneo.RayNeoTouchAction
 import io.homeassistant.companion.android.webview.rayneo.RayNeoTrackpadAction
 import io.homeassistant.companion.android.webview.rayneo.RayNeoWebViewMirror
+import io.homeassistant.companion.android.webview.rayneo.blurRayNeoEditableFocus
+import io.homeassistant.companion.android.webview.rayneo.configureRayNeoWindow
 import io.homeassistant.companion.android.webview.rayneo.deleteRayNeoText
+import io.homeassistant.companion.android.webview.rayneo.disableRayNeoSystemKeyboard
 import io.homeassistant.companion.android.webview.rayneo.dispatchRayNeoEnter
 import io.homeassistant.companion.android.webview.rayneo.hasRayNeoEditableFocus
 import io.homeassistant.companion.android.webview.rayneo.insertRayNeoText
+import io.homeassistant.companion.android.webview.rayneo.installRayNeoKeyboardFocusListener
 import io.homeassistant.companion.android.webview.rayneo.moveRayNeoCaret
+import io.homeassistant.companion.android.webview.rayneo.parseRayNeoControllerKey
 import io.homeassistant.companion.android.webview.rayneo.scrollFromRayNeo
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -339,11 +345,16 @@ class WebViewActivity :
     private val rayNeoCursorPosition = mutableStateOf(RayNeoCursorPosition())
     private val rayNeoCursorVisible = mutableStateOf(true)
     private val rayNeoKeyboardVisible = mutableStateOf(false)
+    private val rayNeoScreenMasked = mutableStateOf(false)
+    private var rayNeoControllerMode = RayNeoControllerMode.TRACKPAD
     private var rayNeoViewportX = 0f
     private var rayNeoViewportY = 0f
+    private var rayNeoViewportHeight = 1
     private var rayNeoAirMouseSelected = false
     private var rayNeoTouchDownTime = 0L
+    private var suppressRayNeoKeyboardUntil = 0L
     private var rayNeoBluetoothPermissionRequested = false
+    private var companionKeyboardVisible = false
 
     private lateinit var windowInsetsController: WindowInsetsControllerCompat
 
@@ -419,6 +430,7 @@ class WebViewActivity :
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        configureRayNeoWindow()
         if (
             intent.extras?.containsKey(EXTRA_SHOW_WHEN_LOCKED) == true &&
             SdkVersion.isAtLeast(Build.VERSION_CODES.O_MR1)
@@ -450,7 +462,21 @@ class WebViewActivity :
         )
         setStatusBarAndBackgroundColor(colorLaunchScreenBackground, colorLaunchScreenBackground)
 
-        webView = WebView(this)
+        webView = WebView(this).apply { disableRayNeoSystemKeyboard() }
+
+        // Force dark mode at the WebView rendering level (must be set before page load)
+        webView.setBackgroundColor(android.graphics.Color.BLACK)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            webView.settings.isAlgorithmicDarkeningAllowed = true
+        } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            @Suppress("DEPRECATION")
+            webView.settings.forceDark = android.webkit.WebSettings.FORCE_DARK_ON
+        }
+
+        webView.addJavascriptInterface(
+            RayNeoKeyboardBridge(webView, ::showRayNeoKeyboard),
+            RAYNEO_KEYBOARD_BRIDGE_NAME,
+        )
         initializeRayNeo()
 
         lifecycleScope.launch {
@@ -475,6 +501,7 @@ class WebViewActivity :
             val cursorPosition by remember { rayNeoCursorPosition }
             val cursorVisible by remember { rayNeoCursorVisible }
             val keyboardVisible by remember { rayNeoKeyboardVisible }
+            val screenMasked by remember { rayNeoScreenMasked }
 
             val configuration = LocalConfiguration.current
             val currentInsetsContext = InsetsContext(
@@ -527,9 +554,11 @@ class WebViewActivity :
                 rayNeoCursorVisible = cursorVisible,
                 rayNeoKeyboardController = rayNeoKeyboardController,
                 rayNeoKeyboardVisible = keyboardVisible,
+                rayNeoScreenMasked = screenMasked,
                 onRayNeoViewportChanged = { width, height, x, y ->
                     rayNeoViewportX = x
                     rayNeoViewportY = y
+                    rayNeoViewportHeight = height
                     rayNeoCursorController.setBounds(width = width, height = height)
                     rayNeoPointerMapper.setViewport(x = x, y = y, width = width, height = height)
                     rayNeoMirror.setCaptureBounds(
@@ -625,11 +654,13 @@ class WebViewActivity :
                         clearHistory = false
                     }
 
+
                     if (serverHandleInsets.value) {
                         insetsContext?.applyInsets(webView)
                     }
 
                     setWebViewZoom()
+                    view?.installRayNeoKeyboardFocusListener()
                     if (moreInfoEntity != "" && view?.progress == 100 && isConnected) {
                         lifecycleScope.launch {
                             val owner = "onPageFinished:$moreInfoEntity"
@@ -1446,18 +1477,30 @@ class WebViewActivity :
         window.setFormat(PixelFormat.RGBA_8888)
         rayNeoMirror = RayNeoWebViewMirror(this).apply { setSource(webView) }
         rayNeoCursorController = RayNeoCursorController().apply {
-            setOnPositionChanged { rayNeoCursorPosition.value = it }
+            setOnPositionChanged {
+                rayNeoCursorPosition.value = it
+                rayNeoMirror.noteInteraction()
+            }
         }
         rayNeoKeyboardController = RayNeoKeyboardController(this)
         rayNeoNetworkInputServer = RayNeoNetworkInputServer(this)
         rayNeoBluetoothController = RayNeoBluetoothControllerClient(this, this)
         rayNeoScrollModeController = RayNeoScrollModeController(
             cursorController = rayNeoCursorController,
-            onTap = ::dispatchRayNeoCursorClick,
-            onScroll = { dx, dy -> webView.scrollFromRayNeo(dx = dx, dy = dy) },
+            onTap = {
+                rayNeoMirror.noteInteraction()
+                dispatchRayNeoCursorClick()
+            },
+            onScroll = { dx, dy ->
+                rayNeoMirror.noteInteraction()
+                dispatchRayNeoScroll(dx = dx, dy = dy)
+            },
             onScrollModeChanged = { enabled ->
                 rayNeoCursorVisible.value = !enabled
                 Timber.i("RayNeo web ${if (enabled) "scroll" else "cursor"} mode activated")
+            },
+            onBack = {
+                onBackPressedDispatcher.onBackPressed()
             },
         )
     }
@@ -1503,6 +1546,7 @@ class WebViewActivity :
 
     override fun onResume() {
         super.onResume()
+        configureRayNeoWindow()
         rayNeoMirror.start()
         rayNeoCursorController.start()
         lifecycleScope.launch {
@@ -1518,16 +1562,9 @@ class WebViewActivity :
         setWebViewZoom()
 
         lifecycleScope.launch {
-            SensorWorker.start(this@WebViewActivity)
-            WebsocketManager.start(this@WebViewActivity)
-
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
 
-            if (presenter.isKeepScreenOnEnabled()) {
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            } else {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
             checkLocationDisabled()
             changeLog.showChangeLog(this@WebViewActivity, false)
@@ -1555,7 +1592,6 @@ class WebViewActivity :
         lifecycleScope.launch {
             presenter.setAppActive(false)
         }
-        if (!isFinishing && !isRelaunching) SensorReceiver.updateAllSensors(this)
     }
 
     fun exoPlayHls(json: JsonObject) {
@@ -2344,17 +2380,25 @@ class WebViewActivity :
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        rayNeoMirror.noteInteraction()
         if (rayNeoScrollModeController.handleArmTouch(event, rayNeoPointerMapper)) return true
         if (rayNeoScrollModeController.handleMouseOrMudra(event, rayNeoPointerMapper)) return true
-        val mapped = rayNeoPointerMapper.map(event) ?: return super.dispatchTouchEvent(event)
+        val mapped = rayNeoPointerMapper.map(event)
+        val dispatchedEvent = mapped ?: event
+        val keyboardTouch = isRayNeoKeyboardTouch(dispatchedEvent.y)
         return try {
-            super.dispatchTouchEvent(mapped)
+            super.dispatchTouchEvent(dispatchedEvent).also {
+                if (event.actionMasked == MotionEvent.ACTION_UP && !keyboardTouch) {
+                    updateRayNeoKeyboardVisibility()
+                }
+            }
         } finally {
-            mapped.recycle()
+            mapped?.recycle()
         }
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        rayNeoMirror.noteInteraction()
         if (rayNeoScrollModeController.handleMouseOrMudra(event, rayNeoPointerMapper)) return true
         val mapped = rayNeoPointerMapper.map(event) ?: return super.dispatchGenericMotionEvent(event)
         return try {
@@ -2372,6 +2416,7 @@ class WebViewActivity :
             event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER
         if (isRayNeoKey) {
             if (event.action == KeyEvent.ACTION_DOWN) {
+                rayNeoMirror.noteInteraction()
                 handleRayNeoKeyDown(event)
             }
             return true
@@ -2431,6 +2476,15 @@ class WebViewActivity :
         dispatchRayNeoClick(x = x, y = y)
     }
 
+    private fun dispatchRayNeoScroll(dx: Float, dy: Float) {
+        val position = rayNeoCursorController.position()
+        val webViewLocation = IntArray(2)
+        webView.getLocationInWindow(webViewLocation)
+        val x = rayNeoViewportX + position.x - webViewLocation[0]
+        val y = rayNeoViewportY + position.y - webViewLocation[1]
+        webView.scrollFromRayNeo(dx = dx, dy = dy, x = x, y = y)
+    }
+
     private fun dispatchRayNeoClick(x: Float, y: Float) {
         val downTime = SystemClock.uptimeMillis()
         dispatchRayNeoWebTouch(action = MotionEvent.ACTION_DOWN, x = x, y = y, downTime = downTime)
@@ -2455,9 +2509,9 @@ class WebViewActivity :
         webView.postDelayed(
             {
                 webView.hasRayNeoEditableFocus { focused ->
-                    rayNeoKeyboardVisible.value = focused
-                    if (focused) {
-                        getSystemService<InputMethodManager>()?.hideSoftInputFromWindow(webView.windowToken, 0)
+                    if (focused) showRayNeoKeyboard() else {
+                        setCompanionKeyboardVisible(false)
+                        setRayNeoKeyboardVisible(false)
                     }
                 }
             },
@@ -2465,16 +2519,65 @@ class WebViewActivity :
         )
     }
 
+    private fun showRayNeoKeyboard() {
+        setCompanionKeyboardVisible(true)
+        if (SystemClock.uptimeMillis() < suppressRayNeoKeyboardUntil) return
+        setRayNeoKeyboardVisible(true)
+        getSystemService<InputMethodManager>()?.hideSoftInputFromWindow(webView.windowToken, 0)
+    }
+
+    private fun hideRayNeoKeyboard() {
+        webView.blurRayNeoEditableFocus()
+        setCompanionKeyboardVisible(false)
+        setRayNeoKeyboardVisible(false)
+    }
+
+    private fun setCompanionKeyboardVisible(visible: Boolean) {
+        if (companionKeyboardVisible == visible) return
+        companionKeyboardVisible = visible
+        rayNeoBluetoothController.sendKeyboardVisibility(lifecycleScope, visible)
+    }
+
+    private fun setRayNeoKeyboardVisible(visible: Boolean) {
+        if (rayNeoKeyboardVisible.value == visible) return
+        rayNeoKeyboardVisible.value = visible
+    }
+
+    private fun dispatchRayNeoMetaKey(command: RayNeoControllerKeyCommand): Boolean {
+        val keyCode = when (command) {
+            RayNeoControllerKeyCommand.ArrowUp -> KeyEvent.KEYCODE_DPAD_UP
+            RayNeoControllerKeyCommand.ArrowDown -> KeyEvent.KEYCODE_DPAD_DOWN
+            RayNeoControllerKeyCommand.ArrowLeft -> KeyEvent.KEYCODE_DPAD_LEFT
+            RayNeoControllerKeyCommand.ArrowRight -> KeyEvent.KEYCODE_DPAD_RIGHT
+            RayNeoControllerKeyCommand.Enter -> KeyEvent.KEYCODE_ENTER
+            else -> return false
+        }
+        val now = SystemClock.uptimeMillis()
+        webView.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
+        webView.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
+        return true
+    }
+
+    private fun toggleRayNeoScreenMask() {
+        rayNeoScreenMasked.value = !rayNeoScreenMasked.value
+        if (rayNeoScreenMasked.value) hideRayNeoKeyboard()
+    }
+
+    private fun isRayNeoKeyboardTouch(windowY: Float): Boolean = rayNeoKeyboardVisible.value &&
+        windowY >= rayNeoViewportY + rayNeoViewportHeight -
+        RAYNEO_KEYBOARD_HEIGHT_DP * resources.displayMetrics.density
+
     override fun onKeyboardAction(action: RayNeoKeyboardAction) {
+        rayNeoMirror.noteInteraction()
         when (action) {
             is RayNeoKeyboardAction.Text -> webView.insertRayNeoText(action.value)
             RayNeoKeyboardAction.Backspace -> webView.deleteRayNeoText()
             RayNeoKeyboardAction.Clear -> webView.deleteRayNeoText(clearAll = true)
             RayNeoKeyboardAction.Enter -> {
                 webView.dispatchRayNeoEnter()
-                rayNeoKeyboardVisible.value = false
+                hideRayNeoKeyboard()
             }
-            RayNeoKeyboardAction.Hide -> rayNeoKeyboardVisible.value = false
+            RayNeoKeyboardAction.Hide -> hideRayNeoKeyboard()
             RayNeoKeyboardAction.MoveLeft -> webView.moveRayNeoCaret(-1)
             RayNeoKeyboardAction.MoveRight -> webView.moveRayNeoCaret(1)
             RayNeoKeyboardAction.ToggleCase, RayNeoKeyboardAction.ToggleSymbols -> Unit
@@ -2488,6 +2591,7 @@ class WebViewActivity :
             port = GLASSES_INPUT_PORT,
             addresses = rayNeoNetworkInputServer.localIpv4Addresses(),
         )
+        rayNeoBluetoothController.sendKeyboardVisibility(lifecycleScope, companionKeyboardVisible)
     }
 
     override fun onControllerDisconnected() {
@@ -2495,25 +2599,39 @@ class WebViewActivity :
     }
 
     override fun onControllerModeChanged(mode: RayNeoControllerMode) {
+        rayNeoControllerMode = mode
         rayNeoCursorController.setMode(mode)
     }
 
     override fun onControllerKey(key: String) {
-        when (key) {
-            "backspace", "Backspace" -> webView.deleteRayNeoText()
-            "enter", "Enter" -> webView.dispatchRayNeoEnter()
-            "hideKeyboard" -> rayNeoKeyboardVisible.value = false
-            "ArrowLeft" -> webView.moveRayNeoCaret(-1)
-            "ArrowRight" -> webView.moveRayNeoCaret(1)
-            "ArrowUp" -> rayNeoScrollModeController.handleDirectionalScroll(dx = 0f, dy = -RAYNEO_KEY_SCROLL_PX)
-            "ArrowDown" -> rayNeoScrollModeController.handleDirectionalScroll(dx = 0f, dy = RAYNEO_KEY_SCROLL_PX)
-            else -> if (key.isNotEmpty()) webView.insertRayNeoText(key)
+        rayNeoMirror.noteInteraction()
+        val command = parseRayNeoControllerKey(key)
+        if (rayNeoControllerMode == RayNeoControllerMode.META && dispatchRayNeoMetaKey(command)) return
+        when (command) {
+            RayNeoControllerKeyCommand.Backspace -> webView.deleteRayNeoText()
+            RayNeoControllerKeyCommand.Enter -> webView.dispatchRayNeoEnter()
+            RayNeoControllerKeyCommand.HideKeyboard -> hideRayNeoKeyboard()
+            RayNeoControllerKeyCommand.ZoomIn -> webView.zoomBy(RAYNEO_ZOOM_IN_FACTOR)
+            RayNeoControllerKeyCommand.ZoomOut -> webView.zoomBy(RAYNEO_ZOOM_OUT_FACTOR)
+            RayNeoControllerKeyCommand.ToggleMask -> toggleRayNeoScreenMask()
+            RayNeoControllerKeyCommand.ArrowLeft -> webView.moveRayNeoCaret(-1)
+            RayNeoControllerKeyCommand.ArrowRight -> webView.moveRayNeoCaret(1)
+            RayNeoControllerKeyCommand.ArrowUp ->
+                rayNeoScrollModeController.handleDirectionalScroll(dx = 0f, dy = -RAYNEO_KEY_SCROLL_PX)
+            RayNeoControllerKeyCommand.ArrowDown ->
+                rayNeoScrollModeController.handleDirectionalScroll(dx = 0f, dy = RAYNEO_KEY_SCROLL_PX)
+            is RayNeoControllerKeyCommand.Text -> if (command.value.isNotEmpty()) {
+                webView.insertRayNeoText(
+                    command.value,
+                )
+            }
         }
     }
 
     override fun onControllerAirMouseRay(x: Float, y: Float, select: Boolean) {
         rayNeoCursorController.onAirMouseRay(x = x, y = y)
         if (select && !rayNeoAirMouseSelected) {
+            suppressRayNeoKeyboardUntil = SystemClock.uptimeMillis() + 1000L
             dispatchRayNeoClick(x = x * webView.width, y = y * webView.height)
         }
         rayNeoAirMouseSelected = select
@@ -2530,14 +2648,20 @@ class WebViewActivity :
     }
 
     override fun onControllerScroll(dx: Float, dy: Float) {
-        rayNeoScrollModeController.handleScroll(dx = dx, dy = dy)
+        rayNeoMirror.noteInteraction()
+        dispatchRayNeoScroll(dx = dx, dy = dy)
     }
 
     override fun onControllerTap() {
+        suppressRayNeoKeyboardUntil = SystemClock.uptimeMillis() + 1000L
         rayNeoScrollModeController.handleTap()
     }
 
     override fun onControllerTouch(action: RayNeoTouchAction, x: Float, y: Float) {
+        rayNeoMirror.noteInteraction()
+        if (action == RayNeoTouchAction.UP) {
+            suppressRayNeoKeyboardUntil = SystemClock.uptimeMillis() + 1000L
+        }
         val webX = x * webView.width
         val webY = y * webView.height
         if (rayNeoScrollModeController.handleDirectTouch(action = action, x = webX, y = webY)) return
@@ -2550,13 +2674,14 @@ class WebViewActivity :
         val eventTime = SystemClock.uptimeMillis()
         if (motionAction == MotionEvent.ACTION_DOWN) rayNeoTouchDownTime = eventTime
         val downTime = rayNeoTouchDownTime.takeIf { it > 0L } ?: eventTime
+        val keyboardTouch = isRayNeoKeyboardTouch(rayNeoViewportY + webY)
         dispatchRayNeoWebTouch(
             action = motionAction,
             x = webX,
             y = webY,
             downTime = downTime,
         )
-        if (motionAction == MotionEvent.ACTION_UP) updateRayNeoKeyboardVisibility()
+        if (motionAction == MotionEvent.ACTION_UP && !keyboardTouch) updateRayNeoKeyboardVisibility()
         if (motionAction == MotionEvent.ACTION_UP || motionAction == MotionEvent.ACTION_CANCEL) {
             rayNeoTouchDownTime = 0L
         }
@@ -2726,3 +2851,6 @@ class WebViewActivity :
 private const val RAYNEO_CURSOR_STEP_PX = 24f
 private const val RAYNEO_KEY_SCROLL_PX = 80f
 private const val RAYNEO_FOCUS_CHECK_DELAY_MS = 120L
+private const val RAYNEO_KEYBOARD_HEIGHT_DP = 140f
+private const val RAYNEO_ZOOM_IN_FACTOR = 1.1f
+private const val RAYNEO_ZOOM_OUT_FACTOR = 0.9f

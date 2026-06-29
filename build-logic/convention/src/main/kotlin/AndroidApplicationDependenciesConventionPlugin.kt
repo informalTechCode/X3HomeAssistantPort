@@ -26,8 +26,6 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
             extensions.getByType<ApplicationExtension>().apply {
                 dependencies {
                     "implementation"(project(":common"))
-                    "implementation"(project(":microwakeword"))
-
                     "implementation"(libs.blurView)
                     "implementation"(libs.haze)
                     "implementation"(libs.haze.materials)

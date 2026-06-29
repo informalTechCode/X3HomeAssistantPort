@@ -38,7 +38,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -79,6 +78,7 @@ import io.homeassistant.companion.android.common.compose.composable.HAModalBotto
 import io.homeassistant.companion.android.common.compose.composable.HAPlainButton
 import io.homeassistant.companion.android.common.compose.composable.HATopBar
 import io.homeassistant.companion.android.common.compose.composable.alpha
+import io.homeassistant.companion.android.common.compose.composable.haVerticalScroll
 import io.homeassistant.companion.android.common.compose.composable.rememberHAModalBottomSheetState
 import io.homeassistant.companion.android.common.compose.theme.HABorderWidth
 import io.homeassistant.companion.android.common.compose.theme.HABrandColors
@@ -268,7 +268,7 @@ private fun ScreenContent(
         modifier = Modifier
             .fillMaxSize()
             .padding(contentPadding)
-            .verticalScroll(rememberScrollState())
+            .haVerticalScroll(rememberScrollState())
             .padding(horizontal = HADimens.SPACE4),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

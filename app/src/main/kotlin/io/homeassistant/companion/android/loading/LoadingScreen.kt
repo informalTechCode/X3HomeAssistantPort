@@ -22,8 +22,9 @@ import io.homeassistant.companion.android.util.compose.HAPreviews
 
 private val ICON_SIZE = 64.dp
 
+/** Displays the application loading state, optionally without continuous animation. */
 @Composable
-fun LoadingScreen(modifier: Modifier = Modifier) {
+fun LoadingScreen(modifier: Modifier = Modifier, animated: Boolean = true) {
     BoxWithConstraints(
         contentAlignment = Alignment.Center,
         modifier = modifier.fillMaxSize(),
@@ -33,15 +34,17 @@ fun LoadingScreen(modifier: Modifier = Modifier) {
             contentDescription = null,
             modifier = Modifier.size(ICON_SIZE),
         )
-        val contentDescriptionLoading = stringResource(commonR.string.loading_content_description)
-        HALoading(
-            modifier = Modifier
-                .padding(bottom = maxHeight / 8)
-                .align(Alignment.BottomCenter)
-                .semantics {
-                    contentDescription = contentDescriptionLoading
-                },
-        )
+        if (animated) {
+            val contentDescriptionLoading = stringResource(commonR.string.loading_content_description)
+            HALoading(
+                modifier = Modifier
+                    .padding(bottom = maxHeight / 8)
+                    .align(Alignment.BottomCenter)
+                    .semantics {
+                        contentDescription = contentDescriptionLoading
+                    },
+            )
+        }
     }
 }
 

@@ -9,6 +9,10 @@ plugins {
 android {
     useLibrary("android.car")
 
+    androidResources {
+        ignoreAssetsPatterns.add("wakeword")
+    }
+
     defaultConfig {
         manifestPlaceholders["sentryRelease"] = "$applicationId@$versionName"
         manifestPlaceholders["sentryDsn"] = System.getenv("SENTRY_DSN") ?: ""
@@ -25,13 +29,8 @@ android {
 
     buildTypes {
         debug {
-            // Required for HWASan wrap.sh to be included uncompressed in the APK
-            // See https://developer.android.com/ndk/guides/hwasan
-            packaging {
-                jniLibs {
-                    useLegacyPackaging = true
-                }
-            }
+            // Keep the development APK compact; HWASan's wrap script is intentionally excluded.
+            packaging.jniLibs.useLegacyPackaging = true
         }
     }
 
@@ -50,4 +49,5 @@ firebaseAppDistributionDefault {
 dependencies {
     // Most of the dependencies are coming from the convention plugin to avoid duplication with `:automotive` module.
     "fullImplementation"(libs.car.projected)
+    "compileOnly"(project(":microwakeword"))
 }

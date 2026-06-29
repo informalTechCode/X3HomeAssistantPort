@@ -1,10 +1,13 @@
 package io.homeassistant.companion.android.onboarding.welcome
 
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
@@ -36,16 +39,20 @@ class WelcomeScreenTest {
 
         composeTestRule.apply {
             setContent {
-                WelcomeScreen(
-                    onConnectClick = { connectClicked = true },
-                    onLearnMoreClick = { leanMoreClicked = true },
-                )
+                DeviceConfigurationOverride(
+                    DeviceConfigurationOverride.ForcedSize(DpSize(640.dp, 480.dp)),
+                ) {
+                    WelcomeScreen(
+                        onConnectClick = { connectClicked = true },
+                        onLearnMoreClick = { leanMoreClicked = true },
+                    )
+                }
             }
 
             onNodeWithText(stringResource(commonR.string.welcome_connect_to_ha)).assertIsDisplayed().performClick()
             assertTrue(connectClicked)
 
-            onNodeWithText(stringResource(commonR.string.welcome_learn_more)).performScrollTo().assertIsDisplayed().performClick()
+            onNodeWithText(stringResource(commonR.string.welcome_learn_more)).assertIsDisplayed().performClick()
             assertTrue(leanMoreClicked)
         }
     }

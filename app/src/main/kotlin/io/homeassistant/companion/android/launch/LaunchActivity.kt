@@ -15,8 +15,12 @@ import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.webkit.WebView
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +37,7 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult.ActionPerformed
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +59,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavController
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.withCreationCallback
@@ -63,12 +70,12 @@ import io.homeassistant.companion.android.WIPFeature
 import io.homeassistant.companion.android.authenticator.Authenticator
 import io.homeassistant.companion.android.authenticator.Authenticator.Companion.AuthenticationResult
 import io.homeassistant.companion.android.common.R as commonR
+import io.homeassistant.companion.android.common.compose.composable.LocalHATextFieldFocusHandler
 import io.homeassistant.companion.android.common.compose.theme.HATheme
 import io.homeassistant.companion.android.common.util.CheckLocalNetworkPermissionUseCase
 import io.homeassistant.companion.android.common.util.SdkVersion
 import io.homeassistant.companion.android.launch.applock.HazeLockOverlay
-import io.homeassistant.companion.android.sensors.SensorReceiver
-import io.homeassistant.companion.android.sensors.SensorWorker
+import io.homeassistant.companion.android.onboarding.connection.navigation.ConnectionRoute
 import io.homeassistant.companion.android.util.ChangeLog
 import io.homeassistant.companion.android.util.CheckLocationDisabledUseCase
 import io.homeassistant.companion.android.util.PLAY_SERVICES_FLAVOR_DOC_URL
@@ -76,19 +83,26 @@ import io.homeassistant.companion.android.util.PlayServicesAvailability
 import io.homeassistant.companion.android.util.compose.HAApp
 import io.homeassistant.companion.android.util.compose.navigateToUri
 import io.homeassistant.companion.android.util.enableEdgeToEdgeCompat
-import io.homeassistant.companion.android.websocket.WebsocketManager
 import io.homeassistant.companion.android.webview.rayneo.GLASSES_INPUT_PORT
 import io.homeassistant.companion.android.webview.rayneo.RayNeoBluetoothControllerClient
 import io.homeassistant.companion.android.webview.rayneo.RayNeoControllerInputListener
+import io.homeassistant.companion.android.webview.rayneo.RayNeoControllerKeyCommand
 import io.homeassistant.companion.android.webview.rayneo.RayNeoControllerMode
 import io.homeassistant.companion.android.webview.rayneo.RayNeoCursorController
 import io.homeassistant.companion.android.webview.rayneo.RayNeoCursorPosition
+import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboard
+import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardAction
+import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardController
+import io.homeassistant.companion.android.webview.rayneo.RayNeoKeyboardListener
 import io.homeassistant.companion.android.webview.rayneo.RayNeoNetworkInputServer
 import io.homeassistant.companion.android.webview.rayneo.RayNeoPointerMapper
 import io.homeassistant.companion.android.webview.rayneo.RayNeoScrollModeController
 import io.homeassistant.companion.android.webview.rayneo.RayNeoTouchAction
 import io.homeassistant.companion.android.webview.rayneo.RayNeoTrackpadAction
 import io.homeassistant.companion.android.webview.rayneo.RayNeoWebViewMirror
+import io.homeassistant.companion.android.webview.rayneo.configureRayNeoWindow
+import io.homeassistant.companion.android.webview.rayneo.disableRayNeoBackgroundWork
+import io.homeassistant.companion.android.webview.rayneo.parseRayNeoControllerKey
 import javax.inject.Inject
 import kotlinx.coroutines.launch
 import kotlinx.parcelize.Parcelize
@@ -108,21 +122,17 @@ private const val DEEP_LINK_KEY = "deep_link_key"
 private const val LOCK_SCREEN_ALIAS_CLASS = "io.homeassistant.companion.android.launch.LaunchOverLockScreen"
 
 /**
- * Main entry point of the application, responsible for holding the whole navigation graph
- * and triggering lifecycle-based refresh of background work.
+ * Main entry point of the application, responsible for holding the whole navigation graph.
  *
  * It also handles the splash screen display based on a condition exposed by the [LaunchViewModel].
  *
- * On resume, refreshes the scheduling of periodic sensor collection via [SensorWorker]
- * and the background WebSocket work via [WebsocketManager].
- * These jobs are managed outside the Activity and may continue beyond this lifecycle.
- * On pause, triggers an immediate sensor update via [SensorReceiver] so the server
- * has fresh data before the app goes to the background.
+ * Background execution is intentionally disabled for the RayNeo X3 port.
  */
 @AndroidEntryPoint
 class LaunchActivity :
     AppCompatActivity(),
-    RayNeoControllerInputListener {
+    RayNeoControllerInputListener,
+    RayNeoKeyboardListener {
     @Inject
     internal lateinit var playServicesAvailability: PlayServicesAvailability
 
@@ -211,15 +221,20 @@ class LaunchActivity :
     private lateinit var rayNeoNetworkInputServer: RayNeoNetworkInputServer
     private lateinit var rayNeoBluetoothController: RayNeoBluetoothControllerClient
     private lateinit var rayNeoScrollModeController: RayNeoScrollModeController
+    private lateinit var rayNeoKeyboardController: RayNeoKeyboardController
     private val rayNeoPointerMapper = RayNeoPointerMapper()
     private val rayNeoCursorPosition = mutableStateOf(RayNeoCursorPosition())
     private val rayNeoCursorVisible = mutableStateOf(true)
+    private val rayNeoKeyboardVisible = mutableStateOf(false)
+    private var companionKeyboardVisible = false
+    private val rayNeoScreenMasked = mutableStateOf(false)
     private var rayNeoViewportX = 0f
     private var rayNeoViewportY = 0f
     private var rayNeoViewportWidth = 1
     private var rayNeoViewportHeight = 1
     private var rayNeoAirMouseSelected = false
     private var rayNeoTouchDownTime = 0L
+    private var suppressRayNeoKeyboardUntil = 0L
     private var rayNeoBluetoothPermissionRequested = false
 
     private val requestRayNeoBluetoothPermission =
@@ -230,6 +245,7 @@ class LaunchActivity :
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        configureRayNeoWindow()
         // Must run before super.onCreate so the window flag is set before the platform decides
         // whether to draw over the keyguard. Gated on the non-exported [LOCK_SCREEN_ALIAS_CLASS]
         // so external apps reaching the public LAUNCHER intent-filter cannot force this on.
@@ -240,6 +256,7 @@ class LaunchActivity :
         }
 
         super.onCreate(savedInstanceState)
+        disableRayNeoBackgroundWork(this)
         val splashScreen = installSplashScreen()
 
         splashScreen.setKeepOnScreenCondition {
@@ -251,63 +268,91 @@ class LaunchActivity :
         window.setFormat(PixelFormat.RGBA_8888)
         rayNeoMirror = RayNeoWebViewMirror(this).apply { setSource(window.decorView) }
         rayNeoCursorController = RayNeoCursorController().apply {
-            setOnPositionChanged { rayNeoCursorPosition.value = it }
+            setOnPositionChanged {
+                rayNeoCursorPosition.value = it
+                rayNeoMirror.noteInteraction()
+            }
         }
         rayNeoNetworkInputServer = RayNeoNetworkInputServer(this)
         rayNeoBluetoothController = RayNeoBluetoothControllerClient(this, this)
+        rayNeoKeyboardController = RayNeoKeyboardController(this)
         rayNeoScrollModeController = RayNeoScrollModeController(
             cursorController = rayNeoCursorController,
-            onTap = ::dispatchRayNeoCursorClick,
-            onScroll = ::dispatchRayNeoScroll,
+            onTap = {
+                rayNeoMirror.noteInteraction()
+                dispatchRayNeoCursorClick()
+            },
+            onScroll = { dx, dy ->
+                rayNeoMirror.noteInteraction()
+                dispatchRayNeoScroll(dx = dx, dy = dy)
+            },
             onScrollModeChanged = { enabled ->
                 rayNeoCursorVisible.value = !enabled
                 Timber.i("RayNeo launch ${if (enabled) "scroll" else "cursor"} mode activated")
+            },
+            onBack = {
+                onBackPressedDispatcher.onBackPressed()
             },
         )
 
         setContent {
             HATheme {
-                RayNeoLaunchScreen(
-                    mirror = rayNeoMirror,
-                    cursorPosition = rayNeoCursorPosition.value,
-                    cursorVisible = rayNeoCursorVisible.value,
-                    onViewportChanged = ::updateRayNeoViewport,
+                CompositionLocalProvider(
+                    LocalHATextFieldFocusHandler provides { focused ->
+                        if (focused) showRayNeoKeyboard()
+                    },
                 ) {
-                    val navController = rememberNavController()
-                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                    val isFullScreen by viewModel.isFullScreen.collectAsStateWithLifecycle()
-                    val isAppLocked by viewModel.isAppLocked.collectAsStateWithLifecycle()
-                    val hazeState = rememberHazeState(blurEnabled = isAppLocked)
-                    val snackbarHostState = remember { SnackbarHostState() }
+                    RayNeoLaunchScreen(
+                        mirror = rayNeoMirror,
+                        cursorPosition = rayNeoCursorPosition.value,
+                        cursorVisible = rayNeoCursorVisible.value,
+                        keyboardController = rayNeoKeyboardController,
+                        keyboardVisible = rayNeoKeyboardVisible.value,
+                        screenMasked = rayNeoScreenMasked.value,
+                        onViewportChanged = ::updateRayNeoViewport,
+                    ) {
+                        val navController = rememberNavController()
+                        val currentBackStackEntry by navController.currentBackStackEntryAsState()
+                        LaunchedEffect(currentBackStackEntry?.destination) {
+                            if (currentBackStackEntry?.destination?.hasRoute(ConnectionRoute::class) == true) {
+                                rayNeoMirror.preferIdle()
+                            }
+                        }
+                        val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+                        val isFullScreen by viewModel.isFullScreen.collectAsStateWithLifecycle()
+                        val isAppLocked by viewModel.isAppLocked.collectAsStateWithLifecycle()
+                        val hazeState = rememberHazeState(blurEnabled = isAppLocked)
+                        val snackbarHostState = remember { SnackbarHostState() }
 
-                    FullscreenEffect(isFullScreen = isFullScreen)
+                        FullscreenEffect(isFullScreen = isFullScreen)
 
-                    MissingPlayServicesNotice(
-                        isMissingRequiredPlayServices = playServicesAvailability.isMissingRequiredPlayServices(),
-                        snackbarHostState = snackbarHostState,
-                        navController = navController,
-                    )
+                        MissingPlayServicesNotice(
+                            isMissingRequiredPlayServices = playServicesAvailability.isMissingRequiredPlayServices(),
+                            snackbarHostState = snackbarHostState,
+                            navController = navController,
+                        )
 
-                    HAApp(
-                        navController = navController,
-                        startDestination = (uiState as? LaunchUiState.Ready)?.startDestination,
-                        snackbarHostState = snackbarHostState,
-                        onRequestFullscreen = viewModel::onFullscreenRequested,
-                        onPipReadinessChanged = viewModel::onPipReadinessChanged,
-                        modifier = Modifier.hazeSource(hazeState),
-                    )
+                        HAApp(
+                            navController = navController,
+                            startDestination = (uiState as? LaunchUiState.Ready)?.startDestination,
+                            snackbarHostState = snackbarHostState,
+                            onRequestFullscreen = viewModel::onFullscreenRequested,
+                            onPipReadinessChanged = viewModel::onPipReadinessChanged,
+                            modifier = Modifier.hazeSource(hazeState),
+                        )
 
-                    // We don't apply the overlay on top of the dialogs
-                    HazeLockOverlay(hazeState)
+                        // We don't apply the overlay on top of the dialogs
+                        HazeLockOverlay(hazeState)
 
-                    when (uiState) {
-                        LaunchUiState.NetworkUnavailable -> NetworkUnavailableDialog(onBackClick = ::finish)
-                        LaunchUiState.WearUnsupported -> WearUnsupportedDialog(onBackClick = ::finish)
-                        LaunchUiState.Loading, is LaunchUiState.Ready -> {
-                            AppLockEffect(
-                                isAppLocked = isAppLocked,
-                                onAuthSucceeded = viewModel::onAuthenticated,
-                            )
+                        when (uiState) {
+                            LaunchUiState.NetworkUnavailable -> NetworkUnavailableDialog(onBackClick = ::finish)
+                            LaunchUiState.WearUnsupported -> WearUnsupportedDialog(onBackClick = ::finish)
+                            LaunchUiState.Loading, is LaunchUiState.Ready -> {
+                                AppLockEffect(
+                                    isAppLocked = isAppLocked,
+                                    onAuthSucceeded = viewModel::onAuthenticated,
+                                )
+                            }
                         }
                     }
                 }
@@ -324,14 +369,13 @@ class LaunchActivity :
 
     override fun onResume() {
         super.onResume()
+        configureRayNeoWindow()
         rayNeoMirror.start()
         rayNeoCursorController.start()
         rayNeoNetworkInputServer.start(lifecycleScope)
         startRayNeoBluetoothController()
         if (WIPFeature.USE_FRONTEND_V2) {
-            SensorWorker.start(this)
             lifecycleScope.launch {
-                WebsocketManager.start(this@LaunchActivity)
                 checkLocationDisabled()
                 checkLocalNetworkPermission()
                 changeLog.showChangeLog(this@LaunchActivity, forceShow = false)
@@ -346,7 +390,6 @@ class LaunchActivity :
         rayNeoMirror.stop()
         rayNeoCursorController.stop()
         super.onPause()
-        if (!isFinishing && WIPFeature.USE_FRONTEND_V2) SensorReceiver.updateAllSensors(this)
     }
 
     override fun onUserLeaveHint() {
@@ -385,6 +428,17 @@ class LaunchActivity :
             event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER
         if (!isRayNeoNavigationKey) return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_DOWN) {
+            rayNeoMirror.noteInteraction()
+            if (rayNeoKeyboardVisible.value) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> rayNeoKeyboardController.move(horizontal = 0, vertical = -1)
+                    KeyEvent.KEYCODE_DPAD_DOWN -> rayNeoKeyboardController.move(horizontal = 0, vertical = 1)
+                    KeyEvent.KEYCODE_DPAD_LEFT -> rayNeoKeyboardController.move(horizontal = -1, vertical = 0)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> rayNeoKeyboardController.move(horizontal = 1, vertical = 0)
+                    KeyEvent.KEYCODE_DPAD_CENTER -> if (event.repeatCount == 0) rayNeoKeyboardController.pressSelected()
+                }
+                return true
+            }
             val handledAsScroll = when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP -> rayNeoScrollModeController.handleDirectionalScroll(
                     dx = 0f,
@@ -417,17 +471,25 @@ class LaunchActivity :
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        rayNeoMirror.noteInteraction()
         if (rayNeoScrollModeController.handleArmTouch(event, rayNeoPointerMapper)) return true
         if (rayNeoScrollModeController.handleMouseOrMudra(event, rayNeoPointerMapper)) return true
-        val mapped = rayNeoPointerMapper.map(event) ?: return super.dispatchTouchEvent(event)
+        val mapped = rayNeoPointerMapper.map(event)
+        val dispatchedEvent = mapped ?: event
+        val keyboardTouch = isRayNeoKeyboardTouch(dispatchedEvent.y)
         return try {
-            super.dispatchTouchEvent(mapped)
+            super.dispatchTouchEvent(dispatchedEvent).also {
+                if (event.actionMasked == MotionEvent.ACTION_UP && !keyboardTouch) {
+                    updateRayNeoKeyboardForFocusedEditor()
+                }
+            }
         } finally {
-            mapped.recycle()
+            mapped?.recycle()
         }
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        rayNeoMirror.noteInteraction()
         if (rayNeoScrollModeController.handleMouseOrMudra(event, rayNeoPointerMapper)) return true
         val mapped = rayNeoPointerMapper.map(event) ?: return super.dispatchGenericMotionEvent(event)
         return try {
@@ -444,6 +506,7 @@ class LaunchActivity :
             port = GLASSES_INPUT_PORT,
             addresses = rayNeoNetworkInputServer.localIpv4Addresses(),
         )
+        rayNeoBluetoothController.sendKeyboardVisibility(lifecycleScope, companionKeyboardVisible)
     }
 
     override fun onControllerDisconnected() {
@@ -455,21 +518,31 @@ class LaunchActivity :
     }
 
     override fun onControllerKey(key: String) {
-        when (key) {
-            "backspace", "Backspace" -> dispatchNativeKey(KeyEvent.KEYCODE_DEL)
-            "enter", "Enter" -> dispatchNativeKey(KeyEvent.KEYCODE_ENTER)
-            "hideKeyboard" -> hideNativeKeyboard()
-            "ArrowLeft" -> dispatchNativeKey(KeyEvent.KEYCODE_DPAD_LEFT)
-            "ArrowRight" -> dispatchNativeKey(KeyEvent.KEYCODE_DPAD_RIGHT)
-            "ArrowUp" -> dispatchNativeKey(KeyEvent.KEYCODE_DPAD_UP)
-            "ArrowDown" -> dispatchNativeKey(KeyEvent.KEYCODE_DPAD_DOWN)
-            else -> if (key.isNotEmpty()) commitNativeText(key)
+        rayNeoMirror.noteInteraction()
+        when (val command = parseRayNeoControllerKey(key)) {
+            RayNeoControllerKeyCommand.Backspace -> deleteNativeText()
+            RayNeoControllerKeyCommand.Enter -> {
+                performNativeEditorAction()
+                hideRayNeoKeyboard()
+            }
+            RayNeoControllerKeyCommand.HideKeyboard -> hideRayNeoKeyboard()
+            RayNeoControllerKeyCommand.ToggleMask -> toggleRayNeoScreenMask()
+            RayNeoControllerKeyCommand.ZoomIn -> zoomRayNeoWebContent(RAYNEO_ZOOM_IN_FACTOR)
+            RayNeoControllerKeyCommand.ZoomOut -> zoomRayNeoWebContent(RAYNEO_ZOOM_OUT_FACTOR)
+            RayNeoControllerKeyCommand.ArrowLeft -> sendNativeEditorKey(KeyEvent.KEYCODE_DPAD_LEFT)
+            RayNeoControllerKeyCommand.ArrowRight -> sendNativeEditorKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+            RayNeoControllerKeyCommand.ArrowUp -> dispatchNativeKey(KeyEvent.KEYCODE_DPAD_UP)
+            RayNeoControllerKeyCommand.ArrowDown -> dispatchNativeKey(KeyEvent.KEYCODE_DPAD_DOWN)
+            is RayNeoControllerKeyCommand.Text -> if (command.value.isNotEmpty()) commitNativeText(command.value)
         }
     }
 
     override fun onControllerAirMouseRay(x: Float, y: Float, select: Boolean) {
         rayNeoCursorController.onAirMouseRay(x = x, y = y)
-        if (select && !rayNeoAirMouseSelected) dispatchRayNeoCursorClick()
+        if (select && !rayNeoAirMouseSelected) {
+            suppressRayNeoKeyboardUntil = SystemClock.uptimeMillis() + 1000L
+            dispatchRayNeoCursorClick()
+        }
         rayNeoAirMouseSelected = select
     }
 
@@ -479,14 +552,20 @@ class LaunchActivity :
     }
 
     override fun onControllerScroll(dx: Float, dy: Float) {
-        rayNeoScrollModeController.handleScroll(dx = dx, dy = dy)
+        rayNeoMirror.noteInteraction()
+        dispatchRayNeoScroll(dx = dx, dy = dy)
     }
 
     override fun onControllerTap() {
+        suppressRayNeoKeyboardUntil = SystemClock.uptimeMillis() + 1000L
         rayNeoScrollModeController.handleTap()
     }
 
     override fun onControllerTouch(action: RayNeoTouchAction, x: Float, y: Float) {
+        rayNeoMirror.noteInteraction()
+        if (action == RayNeoTouchAction.UP) {
+            suppressRayNeoKeyboardUntil = SystemClock.uptimeMillis() + 1000L
+        }
         val viewportX = x * rayNeoViewportWidth
         val viewportY = y * rayNeoViewportHeight
         if (rayNeoScrollModeController.handleDirectTouch(action = action, x = viewportX, y = viewportY)) return
@@ -504,8 +583,28 @@ class LaunchActivity :
             y = viewportY,
             downTime = rayNeoTouchDownTime.takeIf { it > 0L } ?: eventTime,
         )
+        if (motionAction == MotionEvent.ACTION_UP && !isRayNeoKeyboardTouch(rayNeoViewportY + viewportY)) {
+            updateRayNeoKeyboardForFocusedEditor()
+        }
         if (motionAction == MotionEvent.ACTION_UP || motionAction == MotionEvent.ACTION_CANCEL) {
             rayNeoTouchDownTime = 0L
+        }
+    }
+
+    override fun onKeyboardAction(action: RayNeoKeyboardAction) {
+        rayNeoMirror.noteInteraction()
+        when (action) {
+            is RayNeoKeyboardAction.Text -> commitNativeText(action.value)
+            RayNeoKeyboardAction.Backspace -> deleteNativeText()
+            RayNeoKeyboardAction.Clear -> clearNativeText()
+            RayNeoKeyboardAction.Enter -> {
+                performNativeEditorAction()
+                hideRayNeoKeyboard()
+            }
+            RayNeoKeyboardAction.Hide -> hideRayNeoKeyboard()
+            RayNeoKeyboardAction.MoveLeft -> sendNativeEditorKey(KeyEvent.KEYCODE_DPAD_LEFT)
+            RayNeoKeyboardAction.MoveRight -> sendNativeEditorKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+            RayNeoKeyboardAction.ToggleCase, RayNeoKeyboardAction.ToggleSymbols -> Unit
         }
     }
 
@@ -536,6 +635,7 @@ class LaunchActivity :
         val downTime = SystemClock.uptimeMillis()
         dispatchRayNeoTouch(MotionEvent.ACTION_DOWN, position.x, position.y, downTime)
         dispatchRayNeoTouch(MotionEvent.ACTION_UP, position.x, position.y, downTime)
+        updateRayNeoKeyboardForFocusedEditor()
     }
 
     private fun dispatchRayNeoTouch(action: Int, x: Float, y: Float, downTime: Long) {
@@ -597,15 +697,111 @@ class LaunchActivity :
     }
 
     private fun commitNativeText(text: String) {
+        if (nativeEditor()?.first?.commitText(text, 1) == true) return
         val keyEvents = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
         if (keyEvents != null) {
             keyEvents.forEach { super.dispatchKeyEvent(it) }
-            return
         }
-        currentFocus?.onCreateInputConnection(EditorInfo())?.commitText(text, 1)
     }
 
-    private fun hideNativeKeyboard() {
+    private fun deleteNativeText() {
+        if (nativeEditor()?.first?.deleteSurroundingText(1, 0) != true) {
+            dispatchNativeKey(KeyEvent.KEYCODE_DEL)
+        }
+    }
+
+    private fun clearNativeText() {
+        nativeEditor()?.first?.run {
+            performContextMenuAction(android.R.id.selectAll)
+            commitText("", 1)
+        }
+    }
+
+    private fun sendNativeEditorKey(keyCode: Int) {
+        val connection = nativeEditor()?.first
+        if (connection == null) {
+            dispatchNativeKey(keyCode)
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
+        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
+    }
+
+    private fun performNativeEditorAction() {
+        val (connection, editorInfo) = nativeEditor() ?: run {
+            dispatchNativeKey(KeyEvent.KEYCODE_ENTER)
+            return
+        }
+        val action = editorInfo.imeOptions and EditorInfo.IME_MASK_ACTION
+        if (action == EditorInfo.IME_ACTION_NONE || action == EditorInfo.IME_ACTION_UNSPECIFIED) {
+            sendNativeEditorKey(KeyEvent.KEYCODE_ENTER)
+        } else {
+            connection.performEditorAction(action)
+        }
+    }
+
+    private fun nativeEditor(): Pair<InputConnection, EditorInfo>? {
+        val editorInfo = EditorInfo()
+        val connection = currentFocus?.onCreateInputConnection(editorInfo) ?: return null
+        return connection to editorInfo
+    }
+
+    private fun updateRayNeoKeyboardForFocusedEditor() {
+        window.decorView.postDelayed(
+            {
+                if (currentFocus?.onCheckIsTextEditor() == true) {
+                    showRayNeoKeyboard()
+                }
+            },
+            RAYNEO_KEYBOARD_FOCUS_DELAY_MS,
+        )
+    }
+
+    private fun showRayNeoKeyboard() {
+        setCompanionKeyboardVisible(true)
+        if (SystemClock.uptimeMillis() < suppressRayNeoKeyboardUntil) return
+        setRayNeoKeyboardVisible(true)
+        hideSystemKeyboard()
+    }
+
+    private fun hideRayNeoKeyboard() {
+        setCompanionKeyboardVisible(false)
+        setRayNeoKeyboardVisible(false)
+        hideSystemKeyboard()
+    }
+
+    private fun setCompanionKeyboardVisible(visible: Boolean) {
+        if (companionKeyboardVisible == visible) return
+        companionKeyboardVisible = visible
+        rayNeoBluetoothController.sendKeyboardVisibility(lifecycleScope, visible)
+    }
+
+    private fun setRayNeoKeyboardVisible(visible: Boolean) {
+        if (rayNeoKeyboardVisible.value == visible) return
+        rayNeoKeyboardVisible.value = visible
+    }
+
+    private fun toggleRayNeoScreenMask() {
+        rayNeoScreenMasked.value = !rayNeoScreenMasked.value
+        if (rayNeoScreenMasked.value) hideRayNeoKeyboard()
+    }
+
+    private fun zoomRayNeoWebContent(factor: Float) {
+        fun zoomDescendants(view: View) {
+            when (view) {
+                is WebView -> view.zoomBy(factor)
+                is ViewGroup -> repeat(view.childCount) { zoomDescendants(view.getChildAt(it)) }
+            }
+        }
+        zoomDescendants(window.decorView)
+    }
+
+    private fun isRayNeoKeyboardTouch(windowY: Float): Boolean = rayNeoKeyboardVisible.value &&
+        windowY >= rayNeoViewportY + rayNeoViewportHeight -
+        RAYNEO_KEYBOARD_HEIGHT_DP * resources.displayMetrics.density
+
+    private fun hideSystemKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(window.decorView.windowToken, 0)
     }
@@ -616,6 +812,9 @@ private fun RayNeoLaunchScreen(
     mirror: RayNeoWebViewMirror,
     cursorPosition: RayNeoCursorPosition,
     cursorVisible: Boolean,
+    keyboardController: RayNeoKeyboardController,
+    keyboardVisible: Boolean,
+    screenMasked: Boolean,
     onViewportChanged: (width: Int, height: Int, x: Float, y: Float) -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -641,6 +840,12 @@ private fun RayNeoLaunchScreen(
                 },
         ) {
             content()
+            if (keyboardVisible) {
+                RayNeoKeyboard(
+                    state = keyboardController.state.value,
+                    onKeyClick = keyboardController::press,
+                )
+            }
             if (cursorVisible) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawCircle(
@@ -654,6 +859,9 @@ private fun RayNeoLaunchScreen(
                         center = androidx.compose.ui.geometry.Offset(cursorPosition.x, cursorPosition.y),
                     )
                 }
+            }
+            if (screenMasked) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black))
             }
         }
         Box(
@@ -673,6 +881,10 @@ private fun RayNeoLaunchScreen(
 private const val RAYNEO_CURSOR_STEP_PX = 28f
 private const val RAYNEO_KEY_SCROLL_PX = 96f
 private const val RAYNEO_SCROLL_SCALE = 30f
+private const val RAYNEO_KEYBOARD_FOCUS_DELAY_MS = 100L
+private const val RAYNEO_KEYBOARD_HEIGHT_DP = 140f
+private const val RAYNEO_ZOOM_IN_FACTOR = 1.1f
+private const val RAYNEO_ZOOM_OUT_FACTOR = 0.9f
 
 /**
  * Triggers biometric authentication when the app is locked.

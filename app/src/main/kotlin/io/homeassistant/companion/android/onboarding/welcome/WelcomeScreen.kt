@@ -24,6 +24,7 @@ internal fun WelcomeScreen(
         onPrimaryClick = onConnectClick,
         secondaryButtonText = stringResource(commonR.string.welcome_learn_more),
         onSecondaryClick = { coroutineScope.launch { onLearnMoreClick() } },
+        compactForShortViewport = true,
         modifier = modifier,
     )
 }

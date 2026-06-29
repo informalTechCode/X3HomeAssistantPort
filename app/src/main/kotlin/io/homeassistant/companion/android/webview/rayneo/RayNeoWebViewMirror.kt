@@ -13,7 +13,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.AttributeSet
-import android.view.Choreographer
 import android.view.PixelCopy
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -24,8 +23,9 @@ import timber.log.Timber
  * Mirrors the composed left-eye window region to a right-eye [SurfaceView].
  *
  * This is the TapLink X3 PixelCopy pipeline: capture the complete left-eye region from the
- * activity window, then post that bitmap to the right-eye surface on display frames. Capturing the
- * window instead of calling `WebView.draw()` preserves Chromium's hardware-composited content.
+ * activity window, then post that bitmap to the right-eye surface at a power-aware cadence.
+ * Capturing the window instead of calling `WebView.draw()` preserves Chromium's
+ * hardware-composited content.
  */
 internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     SurfaceView(context, attrs),
@@ -43,14 +43,19 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
     private var frameScheduled = false
     private var lastCaptureTime = 0L
     private var lastFailureLogTime = 0L
+    private var interactiveUntil = 0L
     private var releaseRequested = false
     private var loggedFirstFrame = false
 
-    private val frameCallback = Choreographer.FrameCallback {
+    private val captureRunnable = Runnable {
         frameScheduled = false
-        if (!shouldRun) return@FrameCallback
+        if (!shouldRun) return@Runnable
+        val attemptTime = SystemClock.uptimeMillis()
         captureLeftEyeContent()
-        scheduleNextFrame()
+        if (!captureInFlight) {
+            if (lastCaptureTime == 0L) lastCaptureTime = attemptTime
+            scheduleNextFrame()
+        }
     }
 
     init {
@@ -66,6 +71,7 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
     fun setCaptureBounds(left: Int, top: Int, right: Int, bottom: Int) {
         if (right <= left || bottom <= top) return
         captureBounds.set(left, top, right, bottom)
+        noteInteraction()
     }
 
     fun start() {
@@ -76,7 +82,28 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
     fun stop() {
         shouldRun = false
         frameScheduled = false
-        Choreographer.getInstance().removeFrameCallback(frameCallback)
+        refreshHandler.removeCallbacks(captureRunnable)
+    }
+
+    /** Temporarily increases mirror refresh frequency after visible user interaction. */
+    fun noteInteraction() {
+        if (!shouldRun) return
+        interactiveUntil = maxOf(interactiveUntil, SystemClock.uptimeMillis() + INTERACTIVE_WINDOW_MS)
+        if (!surfaceReady) return
+        rescheduleFrame()
+    }
+
+    /** Returns the mirror to its low-power cadence during expensive screen transitions. */
+    fun preferIdle() {
+        interactiveUntil = 0L
+        if (!shouldRun || !surfaceReady) return
+        rescheduleFrame()
+    }
+
+    private fun rescheduleFrame() {
+        refreshHandler.removeCallbacks(captureRunnable)
+        frameScheduled = false
+        scheduleNextFrame()
     }
 
     fun release() {
@@ -91,8 +118,11 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
 
     private fun scheduleNextFrame() {
         if (!shouldRun || !surfaceReady || frameScheduled) return
+        val now = SystemClock.uptimeMillis()
+        val interval = if (now < interactiveUntil) INTERACTIVE_CAPTURE_INTERVAL_MS else IDLE_CAPTURE_INTERVAL_MS
+        val delay = (interval - (now - lastCaptureTime)).coerceAtLeast(0L)
         frameScheduled = true
-        Choreographer.getInstance().postFrameCallback(frameCallback)
+        refreshHandler.postDelayed(captureRunnable, delay)
     }
 
     private fun captureLeftEyeContent() {
@@ -110,9 +140,9 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
         }
 
         val now = SystemClock.uptimeMillis()
-        if (now - lastCaptureTime < MIN_CAPTURE_INTERVAL_MS) return
         val captureBitmap = getOrCreateBitmap(captureBounds.width(), captureBounds.height()) ?: return
 
+        lastCaptureTime = now
         captureInFlight = true
         try {
             PixelCopy.request(
@@ -123,7 +153,6 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
                     captureInFlight = false
                     if (result == PixelCopy.SUCCESS && shouldRun && bitmap === captureBitmap) {
                         drawBitmapToSurface(captureBitmap)
-                        lastCaptureTime = SystemClock.uptimeMillis()
                         if (!loggedFirstFrame) {
                             loggedFirstFrame = true
                             Timber.i(
@@ -136,12 +165,14 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
                     if (releaseRequested && !captureBitmap.isRecycled) {
                         captureBitmap.recycle()
                     }
+                    scheduleNextFrame()
                 },
                 refreshHandler,
             )
         } catch (exception: IllegalArgumentException) {
             captureInFlight = false
             Timber.w(exception, "Unable to capture RayNeo left-eye window region")
+            scheduleNextFrame()
         }
     }
 
@@ -203,8 +234,12 @@ internal class RayNeoWebViewMirror @JvmOverloads constructor(context: Context, a
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surfaceReady = false
+        refreshHandler.removeCallbacks(captureRunnable)
+        frameScheduled = false
     }
 }
 
-private const val MIN_CAPTURE_INTERVAL_MS = 16L
+private const val INTERACTIVE_CAPTURE_INTERVAL_MS = 100L
+private const val IDLE_CAPTURE_INTERVAL_MS = 500L
+private const val INTERACTIVE_WINDOW_MS = 750L
 private const val FAILURE_LOG_INTERVAL_MS = 1_000L

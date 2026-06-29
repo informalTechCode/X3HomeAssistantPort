@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.SettingsEthernet
@@ -41,6 +40,7 @@ import io.homeassistant.companion.android.common.compose.composable.HAHint
 import io.homeassistant.companion.android.common.compose.composable.HASwitch
 import io.homeassistant.companion.android.common.compose.composable.HATextField
 import io.homeassistant.companion.android.common.compose.composable.HATopBar
+import io.homeassistant.companion.android.common.compose.composable.haVerticalScroll
 import io.homeassistant.companion.android.common.compose.theme.HADimens
 import io.homeassistant.companion.android.common.compose.theme.HATextStyle
 import io.homeassistant.companion.android.common.compose.theme.HAThemeForPreview
@@ -134,7 +134,7 @@ private fun SetHomeNetworkContent(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = HADimens.SPACE4)
-            .verticalScroll(rememberScrollState()),
+            .haVerticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(HADimens.SPACE6),
     ) {

@@ -26,6 +26,7 @@ internal class RayNeoNetworkInputServer(private val listener: RayNeoControllerIn
     private val running = AtomicBoolean(false)
     private val loggedActiveReceive = AtomicBoolean(false)
     private val lastReceiveTime = AtomicLong(0L)
+    private val startTime = AtomicLong(0L)
     private var socket: DatagramSocket? = null
     private var receiveJob: Job? = null
     private var discoveryJob: Job? = null
@@ -34,6 +35,7 @@ internal class RayNeoNetworkInputServer(private val listener: RayNeoControllerIn
         if (!running.compareAndSet(false, true)) return
         loggedActiveReceive.set(false)
         lastReceiveTime.set(0L)
+        startTime.set(SystemClock.elapsedRealtime())
         try {
             val inputSocket = DatagramSocket(null).apply {
                 reuseAddress = true
@@ -98,7 +100,14 @@ internal class RayNeoNetworkInputServer(private val listener: RayNeoControllerIn
             val lastReceive = lastReceiveTime.get()
             val recentlyActive = lastReceive > 0L &&
                 SystemClock.elapsedRealtime() - lastReceive < ACTIVE_THRESHOLD_MS
-            delay(if (recentlyActive) DISCOVERY_IDLE_INTERVAL_MS else DISCOVERY_INTERVAL_MS)
+            val inStartupWindow = SystemClock.elapsedRealtime() - startTime.get() < DISCOVERY_STARTUP_WINDOW_MS
+            delay(
+                when {
+                    recentlyActive -> DISCOVERY_ACTIVE_INTERVAL_MS
+                    inStartupWindow -> DISCOVERY_STARTUP_INTERVAL_MS
+                    else -> DISCOVERY_INACTIVE_INTERVAL_MS
+                },
+            )
         }
     }
 
@@ -225,7 +234,9 @@ private const val FIELD_SELECT = "select"
 private const val FIELD_KEY = "key"
 private const val FIELD_MODE = "mode"
 private const val MAX_PACKET_SIZE = 4096
-private const val DISCOVERY_INTERVAL_MS = 1_000L
-private const val DISCOVERY_IDLE_INTERVAL_MS = 5_000L
+private const val DISCOVERY_STARTUP_INTERVAL_MS = 1_000L
+private const val DISCOVERY_INACTIVE_INTERVAL_MS = 5_000L
+private const val DISCOVERY_ACTIVE_INTERVAL_MS = 15_000L
+private const val DISCOVERY_STARTUP_WINDOW_MS = 10_000L
 private const val ACTIVE_THRESHOLD_MS = 10_000L
 private const val LIMITED_BROADCAST_ADDRESS = "255.255.255.255"

@@ -109,6 +109,8 @@
                     android:pathPrefix="/network/" />
             </intent-filter>
         </service>
+        <meta-data android:name="com.rayneo.mercury.app" android:value="true" />
+
     </application>
 
 </manifest>

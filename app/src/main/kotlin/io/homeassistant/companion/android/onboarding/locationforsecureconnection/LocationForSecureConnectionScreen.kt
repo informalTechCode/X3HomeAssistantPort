@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +34,7 @@ import io.homeassistant.companion.android.common.compose.composable.HAHint
 import io.homeassistant.companion.android.common.compose.composable.HARadioGroup
 import io.homeassistant.companion.android.common.compose.composable.HATopBar
 import io.homeassistant.companion.android.common.compose.composable.RadioOption
+import io.homeassistant.companion.android.common.compose.composable.haVerticalScroll
 import io.homeassistant.companion.android.common.compose.composable.rememberSelectedOption
 import io.homeassistant.companion.android.common.compose.theme.HADimens
 import io.homeassistant.companion.android.common.compose.theme.HATextStyle
@@ -135,7 +135,7 @@ private fun LocationForSecureConnectionContent(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(scrollState)
+            .haVerticalScroll(scrollState)
             .padding(horizontal = HADimens.SPACE4),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(HADimens.SPACE6),

@@ -25,6 +25,7 @@ import androidx.webkit.WebViewFeature
 import io.homeassistant.companion.android.common.data.HomeAssistantApis
 import io.homeassistant.companion.android.common.data.prefs.NightModeTheme
 import io.homeassistant.companion.android.common.util.SdkVersion
+import io.homeassistant.companion.android.webview.rayneo.disableRayNeoSystemKeyboard
 import timber.log.Timber
 
 const val BLANK_URL = "about:blank"
@@ -139,6 +140,7 @@ fun WebView.settings(configureDsl: WebSettings.() -> Unit) {
 
 @SuppressLint("SetJavaScriptEnabled")
 private fun WebView.defaultSettings() {
+    disableRayNeoSystemKeyboard()
     settings {
         // https://github.com/home-assistant/android/pull/3353
         minimumFontSize = 5

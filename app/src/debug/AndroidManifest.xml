@@ -46,6 +46,8 @@
                     android:pathPrefix="/tag/" />
             </intent-filter>
         </activity>
+        <meta-data android:name="com.rayneo.mercury.app" android:value="true" />
+
     </application>
 
 </manifest>

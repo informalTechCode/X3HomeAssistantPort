@@ -44,6 +44,44 @@ enum class RayNeoTouchAction {
     CANCEL,
 }
 
+internal sealed interface RayNeoControllerKeyCommand {
+    data object Backspace : RayNeoControllerKeyCommand
+
+    data object Enter : RayNeoControllerKeyCommand
+
+    data object HideKeyboard : RayNeoControllerKeyCommand
+
+    data object ZoomIn : RayNeoControllerKeyCommand
+
+    data object ZoomOut : RayNeoControllerKeyCommand
+
+    data object ToggleMask : RayNeoControllerKeyCommand
+
+    data object ArrowUp : RayNeoControllerKeyCommand
+
+    data object ArrowDown : RayNeoControllerKeyCommand
+
+    data object ArrowLeft : RayNeoControllerKeyCommand
+
+    data object ArrowRight : RayNeoControllerKeyCommand
+
+    data class Text(val value: String) : RayNeoControllerKeyCommand
+}
+
+internal fun parseRayNeoControllerKey(key: String): RayNeoControllerKeyCommand = when (key) {
+    "backspace", "Backspace" -> RayNeoControllerKeyCommand.Backspace
+    "enter", "Enter" -> RayNeoControllerKeyCommand.Enter
+    "hideKeyboard" -> RayNeoControllerKeyCommand.HideKeyboard
+    "zoomIn" -> RayNeoControllerKeyCommand.ZoomIn
+    "zoomOut" -> RayNeoControllerKeyCommand.ZoomOut
+    "toggleMask" -> RayNeoControllerKeyCommand.ToggleMask
+    "ArrowUp" -> RayNeoControllerKeyCommand.ArrowUp
+    "ArrowDown" -> RayNeoControllerKeyCommand.ArrowDown
+    "ArrowLeft" -> RayNeoControllerKeyCommand.ArrowLeft
+    "ArrowRight" -> RayNeoControllerKeyCommand.ArrowRight
+    else -> RayNeoControllerKeyCommand.Text(key)
+}
+
 internal object RayNeoReliableMessageDeduper {
     private const val CACHE_SIZE = 256
     private val mutex = Mutex()

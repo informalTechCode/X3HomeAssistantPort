@@ -38,7 +38,6 @@ internal class RayNeoBluetoothControllerClient(
     private val running = AtomicBoolean(false)
     private val connected = AtomicBoolean(false)
     private val outputMutex = Mutex()
-    private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     }
@@ -74,28 +73,46 @@ internal class RayNeoBluetoothControllerClient(
         }
     }
 
+    fun sendKeyboardVisibility(scope: CoroutineScope, visible: Boolean) {
+        scope.launch(Dispatchers.IO) {
+            send(
+                JSONObject()
+                    .put(FIELD_TYPE, TYPE_KEYBOARD)
+                    .put(FIELD_VISIBLE, visible),
+            )
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private suspend fun connectLoop() {
+        var retryDelay = INITIAL_RETRY_DELAY_MS
         while (running.get() && currentCoroutineContext().isActive) {
             val phone = findPairedPhone()
             if (phone == null) {
-                delay(RETRY_DELAY_MS)
+                delay(retryDelay)
+                retryDelay = nextRetryDelay(retryDelay)
                 continue
             }
             try {
                 val controllerSocket = phone.createRfcommSocketToServiceRecord(SPP_UUID)
                 socket = controllerSocket
-                bluetoothAdapter?.cancelDiscovery()
+                try {
+                    bluetoothAdapter?.cancelDiscovery()
+                } catch (exception: SecurityException) {
+                    Timber.d(exception, "Unable to cancel Bluetooth discovery before controller connection")
+                }
                 controllerSocket.connect()
                 if (!controllerSocket.isConnected) {
                     closeSocket()
-                    delay(RETRY_DELAY_MS)
+                    delay(retryDelay)
+                    retryDelay = nextRetryDelay(retryDelay)
                     continue
                 }
 
+                retryDelay = INITIAL_RETRY_DELAY_MS
                 connected.set(true)
                 outputStream = controllerSocket.outputStream
-                preferences.edit().putString(LAST_CONTROLLER_ADDRESS, phone.address).apply()
+                controllerPreferences().edit().putString(LAST_CONTROLLER_ADDRESS, phone.address).apply()
                 withContext(Dispatchers.Main.immediate) {
                     listener.onControllerConnected(phone.name ?: "TapLink controller", phone.address)
                 }
@@ -112,14 +129,20 @@ internal class RayNeoBluetoothControllerClient(
                     withContext(Dispatchers.Main.immediate) { listener.onControllerDisconnected() }
                 }
             }
-            if (running.get()) delay(RETRY_DELAY_MS)
+            if (running.get()) {
+                delay(retryDelay)
+                retryDelay = nextRetryDelay(retryDelay)
+            }
         }
     }
+
+    private fun nextRetryDelay(currentDelay: Long): Long =
+        (currentDelay * RETRY_BACKOFF_MULTIPLIER).coerceAtMost(MAX_RETRY_DELAY_MS)
 
     @SuppressLint("MissingPermission")
     private fun findPairedPhone(): BluetoothDevice? {
         val devices = bluetoothAdapter?.bondedDevices.orEmpty()
-        val savedAddress = preferences.getString(LAST_CONTROLLER_ADDRESS, null)
+        val savedAddress = controllerPreferences().getString(LAST_CONTROLLER_ADDRESS, null)
         devices.firstOrNull { it.address == savedAddress }?.let { return it }
         val likelyPhone = devices.firstOrNull { device ->
             val name = device.name?.lowercase().orEmpty()
@@ -209,10 +232,14 @@ internal class RayNeoBluetoothControllerClient(
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) ==
             PackageManager.PERMISSION_GRANTED
     }
+
+    private fun controllerPreferences() = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 }
 
 private const val READ_BUFFER_SIZE = 8192
-private const val RETRY_DELAY_MS = 2_500L
+private const val INITIAL_RETRY_DELAY_MS = 2_500L
+private const val MAX_RETRY_DELAY_MS = 30_000L
+private const val RETRY_BACKOFF_MULTIPLIER = 2
 private const val PREFERENCES_NAME = "TapLinkControllerClient"
 private const val LAST_CONTROLLER_ADDRESS = "last_controller_address"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -224,6 +251,7 @@ private const val TYPE_SCROLL = "scroll"
 private const val TYPE_TAP = "tap"
 private const val TYPE_KEY = "key"
 private const val TYPE_TOUCH = "touch"
+private const val TYPE_KEYBOARD = "keyboard"
 private const val FIELD_TYPE = "type"
 private const val FIELD_PORT = "port"
 private const val FIELD_ADDRESSES = "addresses"
@@ -238,3 +266,4 @@ private const val FIELD_X = "x"
 private const val FIELD_Y = "y"
 private const val FIELD_SELECT = "select"
 private const val FIELD_KEY = "key"
+private const val FIELD_VISIBLE = "visible"

@@ -92,4 +92,5 @@ android {
 dependencies {
     // Most of the dependencies are coming from the convention plugin to avoid duplication with `:app` module.
     implementation(libs.car.automotive)
+    implementation(project(":microwakeword"))
 }
