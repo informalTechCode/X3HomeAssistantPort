@@ -1,67 +1,73 @@
-# Home Assistant Companion for Android
+# Home Assistant Companion for Android — Rayneo X3 Pro Port
 
 [![Build Status](https://github.com/home-assistant/android/actions/workflows/onPush.yml/badge.svg)](https://github.com/home-assistant/android/actions/workflows/onPush.yml)  
-[![Play Store](https://img.shields.io/badge/Play%20Store-Download-blue?logo=google-play)](https://play.google.com/store/apps/details?id=io.homeassistant.companion.android)
-[![Play Store Beta](https://img.shields.io/badge/Play%20Store%20Beta-Download-blue?logo=google-play)](https://play.google.com/apps/testing/io.homeassistant.companion.android)
-[![Discord](https://img.shields.io/discord/330944238910963714?label=Discord&logo=discord)](https://discord.gg/c5DvZ4e)
 [![Stars](https://img.shields.io/github/stars/home-assistant/android?style=social)](https://github.com/home-assistant/android/stargazers)
 
-Welcome to the **Home Assistant Companion for Android**! This is the official Android app for [Home Assistant](https://www.home-assistant.io/), a powerful open-source home automation platform. Join us in building an app used by millions of users worldwide.
+This repository is a specialized port of the official **Home Assistant Companion for Android** application, customized specifically to run on the **Rayneo X3 Pro** AR glasses. It integrates stereoscopic dual-eye rendering and advanced wearable input systems.
+
+<a href="https://www.buymeacoffee.com/informaltech" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 ---
 
-## Features
+## Features & Customizations
 
-- **Control Your Smart Home**: Seamlessly interact with your Home Assistant instance.
-- **Native Android Experience**: Leverage Android-specific features like widgets, notifications, and location tracking.
-- **Customizable**: Tailor the app to your needs with themes, dashboards, and more.
-- **Open Source**: Contribute to a project that empowers users to take control of their smart homes.
+- **Stereoscopic Dual-Eye Rendering**: Automatically mirrors the Home Assistant frontend WebView into a stereoscopic viewport suitable for AR glasses comfort.
+- **Custom Wearable Control Server**: Integrates background input listeners for smooth interaction.
+- **TapLink X3 Companion App Compatibility**: Seamlessly pairs with the [TapLink X3 Companion App](https://github.com/informalTechCode/TAPLINKX3) running on a mobile phone to act as a wireless controller.
+- **Low-Latency Input Network**: Uses a dedicated UDP connection to stream high-frequency cursor coordinates, scroll inputs, and air mouse gestures.
 
-## Get the app
+---
 
-- **[Download from the Play Store](https://play.google.com/store/apps/details?id=io.homeassistant.companion.android)**  
-  Join the [Play Store Beta](https://play.google.com/apps/testing/io.homeassistant.companion.android) to test new features early.
-- **Other Stores**: The app is also available in other app stores.
+## Gesture & Control Reference
 
-## Documentation
+You can interact with the interface using gestures on the temple arm of the glasses or via the companion controller.
 
-Looking for help? Check out the [Home Assistant Companion Documentation](https://companion.home-assistant.io/) for detailed guides on using the app.
+| Gesture / Input | Action | Description |
+| --- | --- | --- |
+| **Single Tap** | Click / Focus | Primary interaction to select items, toggle lights, or focus inputs. |
+| **Double Tap** | Go Back | Standard navigation action to go back to the previous screen. |
+| **Triple Tap** | Toggle Scroll Mode | Toggles Scroll Mode on the temple. When active, swipe gestures scroll the page instead of moving the cursor. |
 
-## Report a bug or request a feature
+---
 
-Found a bug or have an idea for a new feature? Let us know!  
+## TapLink X3 Companion App Integration
 
-- **[Open a Bug Report](https://github.com/home-assistant/android/issues/new?template=Bug_report.md)**  
-- **[Request a Feature](https://github.com/home-assistant/android/issues/new?template=feature_request.md)**  
+The companion controller app serves as the input bridge for the Rayneo X3 Pro glasses.
+* **Repository**: [TAPLINKX3](https://github.com/informalTechCode/TAPLINKX3)
+* **Features Provided**:
+  * **Precision Trackpad**: Move the cursor smoothly across the Home Assistant UI.
+  * **Air Mouse**: Aim and point using the phone's gyroscope.
+  * **Custom Radial Keyboard**: Simplifies entering text (e.g. passwords, URLs, or entity names).
+  * **UDP Lane**: High-performance cursor updates on UDP ports `37692` and `37693`.
 
-We appreciate your feedback and contributions to make the app even better!
+---
 
-## Contributing
+## Technical Architecture (RayNeo Classes)
 
-We are thrilled to welcome contributions from the community! This app exists thanks to the incredible efforts of the Home Assistant community. Whether you're fixing bugs, adding new features, or improving documentation, your contributions make a difference.
+The custom logic for RayNeo X3 Pro is housed under `app/src/main/kotlin/io/homeassistant/companion/android/webview/rayneo/`:
+- [RayNeoBluetoothControllerClient.kt](app/src/main/kotlin/io/homeassistant/companion/android/webview/rayneo/RayNeoBluetoothControllerClient.kt): Manages pairing and communication with the TapLink companion app over Bluetooth.
+- [RayNeoNetworkInputServer.kt](app/src/main/kotlin/io/homeassistant/companion/android/webview/rayneo/RayNeoNetworkInputServer.kt): Establishes a UDP server to process high-frequency mouse movements and scroll inputs.
+- [RayNeoScrollModeController.kt](app/src/main/kotlin/io/homeassistant/companion/android/webview/rayneo/RayNeoScrollModeController.kt): Handles the gesture detection and state machine (e.g., tap, double-tap back, triple-tap scroll mode toggle).
+- [RayNeoWebViewMirror.kt](app/src/main/kotlin/io/homeassistant/companion/android/webview/rayneo/RayNeoWebViewMirror.kt): Splices the WebView into left and right views for AR stereoscopic rendering.
 
-Every contribution, big or small, is greatly appreciated. Together, we can make the Home Assistant Companion for Android even better!
+---
 
-### Getting started
+## Build & Development
 
-1. Read the [Developer Guide](https://developers.home-assistant.io/docs/android/).
-2. Fork the repository and create a branch for your changes.
-3. Submit a pull request and join the discussion!
+Follow the standard Gradle build commands. For convenience:
 
-## Join the community
+```bash
+# Clean and build the debug APK
+./gradlew assembleDebug
 
-Connect with other contributors and users in our vibrant **[Discord Community](https://discord.gg/c5DvZ4e)**: Join the **[#Android](https://discord.com/channels/330944238910963714/1346948551892009101)** channel to chat with developers and contributors.
+# Run unit tests
+./gradlew test
+```
 
-## Star the repository
+For general details on the core Home Assistant Companion app (architecture, sensors, widgets, Wear OS integration, etc.), please refer to the [official developer guide](https://developers.home-assistant.io/docs/android/) or check out [companion.home-assistant.io](https://companion.home-assistant.io/).
 
-If you find this project useful, consider giving it a star on GitHub!  
-It helps others discover the project and motivates us to keep improving.
+---
 
-<a href="https://next.ossinsight.io/widgets/official/analyze-repo-stars-history?repo_id=179008173" target="_blank" style="display: block" align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://next.ossinsight.io/widgets/official/analyze-repo-stars-history/thumbnail.png?repo_id=179008173&image_size=auto&color_scheme=dark" width="721" height="auto">
-    <img alt="Star History of home-assistant/android" src="https://next.ossinsight.io/widgets/official/analyze-repo-stars-history/thumbnail.png?repo_id=179008173&image_size=auto&color_scheme=light" width="721" height="auto">
-  </picture>
-</a>
+## License
 
-[![Home Assistant - A project from the Open Home Foundation](https://www.openhomefoundation.org/badges/home-assistant.png)](https://www.openhomefoundation.org/)
+This project is open-source and licensed under the Apache License 2.0. See [LICENSE.md](LICENSE.md) for more details.
